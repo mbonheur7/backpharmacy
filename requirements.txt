@@ -1,0 +1,14 @@
+# Stage 1 — database layer
+SQLAlchemy==2.0.35
+alembic==1.13.3
+# 2.9.9 does not ship a prebuilt wheel for Python 3.14 and fails trying to
+# compile from source on Windows. 2.9.12 does ship one and installs cleanly
+# — confirmed against Python 3.14.6 on Windows.
+psycopg2-binary==2.9.12
+bcrypt==4.2.0
+python-dotenv==1.0.1
+
+# Stage 2 — Flask API layer
+Flask==3.0.3
+Flask-Cors==4.0.1
+gunicorn==22.0.0
