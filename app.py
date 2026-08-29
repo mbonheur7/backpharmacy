@@ -14,7 +14,7 @@ def create_app():
     # Signed, httpOnly session cookie (Flask's built-in session mechanism) —
     # per the approved architecture, chosen over JWT-in-browser-storage.
     app.config["SESSION_COOKIE_HTTPONLY"] = True
-    app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+    app.config["SESSION_COOKIE_SAMESITE"] = "None"
     app.config["SESSION_COOKIE_SECURE"] = Config.SESSION_COOKIE_SECURE
     app.config["PERMANENT_SESSION_LIFETIME"] = timedelta(hours=Config.SESSION_LIFETIME_HOURS)
 
