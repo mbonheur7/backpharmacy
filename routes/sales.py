@@ -5,7 +5,11 @@ from sqlalchemy import desc
 
 from extensions import db_session
 from models import Medicine, Sale, SaleItem
-from services.permission_service import login_required, get_current_user
+from services.permission_service import (
+    login_required,
+    require_role,
+    get_current_user,
+)
 from services.stock_service import adjust_stock, StockError
 from services.activity_log_service import log_activity
 from serializers import serialize_sale
@@ -29,7 +33,7 @@ def _strict_integer(value):
 
 
 @sales_bp.post("")
-@login_required
+@require_role("Super Admin", "Pharmacist")
 def checkout():
     """
     All-or-nothing checkout.
@@ -220,7 +224,7 @@ def checkout():
 
     db_session.commit()
 
-    include_profit = user.role == "Admin"
+    include_profit = user.role in ("Super Admin", "Admin Viewer")
 
     return jsonify(
         {
@@ -290,7 +294,7 @@ def list_sales():
     )
 
     include_profit = (
-        get_current_user().role == "Admin"
+        get_current_user().role in ("Super Admin", "Admin Viewer")
     )
 
     return jsonify(
@@ -320,7 +324,7 @@ def get_sale(sale_id):
         )
 
     include_profit = (
-        get_current_user().role == "Admin"
+        get_current_user().role in ("Super Admin", "Admin Viewer")
     )
 
     return jsonify(

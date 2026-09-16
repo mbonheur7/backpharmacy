@@ -4,7 +4,7 @@ from zoneinfo import ZoneInfo
 from flask import Blueprint, jsonify
 
 from extensions import db_session
-from models import Medicine, Sale
+from models import Medicine, Sale, Expense
 from services.permission_service import login_required
 from serializers import serialize_medicine
 
@@ -207,9 +207,47 @@ def dashboard():
         .all()
     )
 
-    revenue = sum(
-        float(s.total_amount)
-        for s in todays_sales
+    # -------------------------------------------------------------
+    # Today's gross revenue
+    # -------------------------------------------------------------
+
+    gross_revenue = sum(
+     float(s.total_amount)
+     for s in todays_sales
+    )
+
+
+    # -- -----------------------------------------------------------
+    # Today's expenses
+    # -------------------------------------------------------------
+
+    todays_expenses = (
+     db_session.query(Expense)
+     .filter(
+        Expense.expense_date >= start_of_today,
+        Expense.expense_date < start_of_tomorrow,
+     )
+     .all()
+    )
+
+
+    total_expenses = sum(
+     float(expense.amount)
+     for expense in todays_expenses
+    )
+
+
+    # -------------------------------------------------------------
+    # Today's net revenue
+    #
+    # Gross sales
+    # minus
+    # Today's operating expenses
+    # -------------------------------------------------------------
+
+    net_revenue = (
+     gross_revenue
+     - total_expenses
     )
 
     # -------------------------------------------------------------
@@ -217,11 +255,18 @@ def dashboard():
     # -------------------------------------------------------------
 
     return jsonify({
-        "low_stock": low_stock_count,
-        "critical_stock": critical_count,
-        "out_of_stock": out_count,
-        "expiring_soon": expiring_count,
-        "expired": expired_count,
-        "todays_revenue": revenue,
-        "todays_transactions": len(todays_sales),
+     "low_stock": low_stock_count,
+     "critical_stock": critical_count,
+     "out_of_stock": out_count,
+     "expiring_soon": expiring_count,
+     "expired": expired_count,
+
+     "todays_transactions": len(todays_sales),
+
+     "todays_gross_revenue": gross_revenue,
+     "todays_expenses": total_expenses,
+     "todays_net_revenue": net_revenue,
+
+     # Existing frontend compatibility
+     "todays_revenue": net_revenue,
     }), 200

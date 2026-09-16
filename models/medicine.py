@@ -32,9 +32,20 @@ class Medicine(Base):
     status = Column(String(20), nullable=False, default="Active")
     critical_stock = Column(Integer, nullable=False, default=3)
 
-    stock_movements = relationship("StockMovement", back_populates="medicine")
-    sale_items = relationship("SaleItem", back_populates="medicine")
+    stock_movements = relationship(
+        "StockMovement",
+        back_populates="medicine",
+    )
 
+    sale_items = relationship(
+        "SaleItem",
+        back_populates="medicine",
+    )
+
+    comments = relationship(
+        "MedicineComment",
+        back_populates="medicine",
+    )
     __table_args__ = (
         CheckConstraint("status IN ('Active', 'Discontinued')", name="ck_medicines_status"),
         CheckConstraint("quantity >= 0", name="ck_medicines_quantity_nonnegative"),

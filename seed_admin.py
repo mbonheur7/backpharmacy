@@ -52,7 +52,7 @@ def main():
             username=username,
             password_hash=password_hash,
             fullname=fullname,
-            role="Admin",
+            role="Super Admin",
             is_active=True,
         )
         session.add(admin)

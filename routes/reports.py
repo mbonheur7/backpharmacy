@@ -1,178 +1,834 @@
 """
 Report access split:
 
-- inventory / sales-by-period (daily, weekly, monthly, yearly, custom
-  range) / best-selling / lowest-selling / expired-medicines: both roles.
-  None of these expose cost or profit figures.
-- purchase report and profit report: Admin only.
+- inventory / sales-by-period / best-selling /
+  lowest-selling / expired-medicines:
+  available to logged-in users.
+
+- purchase report and profit report:
+  Super Admin and Admin Viewer only.
+
+Sales reports now include:
+
+- gross revenue
+- expenses
+- net revenue
+
+Net revenue:
+
+    gross revenue - expenses
+
+Breakdowns:
+
+- daily   -> one day
+- weekly  -> Monday through Sunday
+- monthly -> day by day
+- yearly  -> month by month
+- custom  -> day by day
 """
 
-from datetime import date, datetime, timedelta
-from zoneinfo import ZoneInfo
+from datetime import (
+    datetime,
+    timedelta,
+)
 
-from flask import Blueprint, request, jsonify
-from sqlalchemy import func as sa_func
+from zoneinfo import (
+    ZoneInfo,
+)
 
-from extensions import db_session
-from models import Medicine, Sale, SaleItem
-from services.permission_service import login_required, require_role
-from utils import error_response
+from flask import (
+    Blueprint,
+    request,
+    jsonify,
+)
 
-reports_bp = Blueprint("reports", __name__)
+from sqlalchemy import (
+    func as sa_func,
+)
 
-RWANDA_TZ = ZoneInfo("Africa/Kigali")
+from extensions import (
+    db_session,
+)
+
+from models import (
+    Medicine,
+    Sale,
+    SaleItem,
+    Expense,
+)
+
+from services.permission_service import (
+    login_required,
+    require_role,
+)
+
+from utils import (
+    error_response,
+)
 
 
-@reports_bp.get("/inventory")
+reports_bp = Blueprint(
+    "reports",
+    __name__,
+)
+
+
+RWANDA_TZ = ZoneInfo(
+    "Africa/Kigali"
+)
+
+
+# =========================================================
+# INVENTORY REPORT
+# =========================================================
+
+@reports_bp.get(
+    "/inventory"
+)
 @login_required
 def inventory_report():
-    meds = db_session.query(Medicine).filter(
-        Medicine.status == "Active"
-    ).all()
 
-    total_items = sum(m.quantity for m in meds)
+    meds = (
+        db_session.query(
+            Medicine
+        )
+        .filter(
+            Medicine.status
+            == "Active"
+        )
+        .all()
+    )
+
+    total_items = sum(
+        m.quantity
+        for m in meds
+    )
+
     selling_value = sum(
-        float(m.selling_price) * m.quantity
+        float(
+            m.selling_price
+        )
+        * m.quantity
         for m in meds
     )
 
     return jsonify({
-        "different_medicines": len(meds),
-        "total_items": total_items,
-        "selling_value": selling_value,
+
+        "different_medicines": (
+            len(meds)
+        ),
+
+        "total_items": (
+            total_items
+        ),
+
+        "selling_value": (
+            selling_value
+        ),
+
     }), 200
 
 
-@reports_bp.get("/purchase")
-@require_role("Admin")
+# =========================================================
+# PURCHASE REPORT
+# =========================================================
+
+@reports_bp.get(
+    "/purchase"
+)
+@require_role(
+    "Super Admin",
+    "Admin Viewer",
+)
 def purchase_report():
-    meds = db_session.query(Medicine).filter(
-        Medicine.status == "Active"
-    ).all()
+
+    meds = (
+        db_session.query(
+            Medicine
+        )
+        .filter(
+            Medicine.status
+            == "Active"
+        )
+        .all()
+    )
 
     purchase_value = sum(
-        float(m.purchase_price) * m.quantity
+        float(
+            m.purchase_price
+        )
+        * m.quantity
         for m in meds
     )
 
     return jsonify({
-        "different_medicines": len(meds),
-        "purchase_value": purchase_value,
+
+        "different_medicines": (
+            len(meds)
+        ),
+
+        "purchase_value": (
+            purchase_value
+        ),
+
     }), 200
 
 
-@reports_bp.get("/profit")
-@require_role("Admin")
+# =========================================================
+# PROFIT REPORT
+# =========================================================
+
+@reports_bp.get(
+    "/profit"
+)
+@require_role(
+    "Super Admin",
+    "Admin Viewer",
+)
 def profit_report():
-    meds = db_session.query(Medicine).filter(
-        Medicine.status == "Active"
-    ).all()
+
+    meds = (
+        db_session.query(
+            Medicine
+        )
+        .filter(
+            Medicine.status
+            == "Active"
+        )
+        .all()
+    )
 
     purchase_value = sum(
-        float(m.purchase_price) * m.quantity
+        float(
+            m.purchase_price
+        )
+        * m.quantity
         for m in meds
     )
 
     selling_value = sum(
-        float(m.selling_price) * m.quantity
+        float(
+            m.selling_price
+        )
+        * m.quantity
         for m in meds
     )
 
-    expected_inventory_profit = selling_value - purchase_value
+    expected_inventory_profit = (
+        selling_value
+        - purchase_value
+    )
 
     realized_profit = (
         db_session.query(
             sa_func.coalesce(
-                sa_func.sum(Sale.total_profit),
-                0
+                sa_func.sum(
+                    Sale.total_profit
+                ),
+                0,
             )
-        ).scalar()
+        )
+        .scalar()
     )
 
     return jsonify({
-        "expected_inventory_profit": expected_inventory_profit,
-        "realized_profit_all_time": float(realized_profit),
+
+        "expected_inventory_profit": (
+            expected_inventory_profit
+        ),
+
+        "realized_profit_all_time": (
+            float(
+                realized_profit
+            )
+        ),
+
     }), 200
 
 
 # =========================================================
-# SALES REPORT HELPERS
+# TIME HELPERS
 # =========================================================
 
-def _sales_summary(start=None, end=None):
-    query = db_session.query(Sale)
+def _to_rwanda_time(
+    value
+):
+    """
+    Convert a database date/datetime into Rwanda time.
 
-    if start:
-        query = query.filter(Sale.sale_date >= start)
+    Handles both:
+    - datetime values from Sale.sale_date
+    - date values from Expense.expense_date
+    """
 
-    if end:
-        query = query.filter(Sale.sale_date < end)
+    # -----------------------------------------------------
+    # Expense dates may be plain datetime.date objects.
+    # Convert them to a datetime at midnight in Rwanda.
+    # -----------------------------------------------------
 
-    sales = query.all()
+    if (
+        not isinstance(
+            value,
+            datetime,
+        )
+    ):
 
-    return {
-        "transactions": len(sales),
-        "revenue": sum(
-            float(s.total_amount)
-            for s in sales
-        ),
-    }
+        return datetime.combine(
+            value,
+            datetime.min.time(),
+            tzinfo=RWANDA_TZ,
+        )
+
+    # -----------------------------------------------------
+    # Datetime values
+    # -----------------------------------------------------
+
+    if value.tzinfo is None:
+
+        return value.replace(
+            tzinfo=RWANDA_TZ
+        )
+
+    return value.astimezone(
+        RWANDA_TZ
+    )
 
 
 def _rwanda_today_range():
     """
-    Return the beginning of today and the beginning of tomorrow
-    using Rwanda/Kigali time.
-
-    This matches the Dashboard's definition of "today".
+    Beginning of today and beginning of tomorrow
+    using Africa/Kigali time.
     """
 
-    rwanda_now = datetime.now(RWANDA_TZ)
-
-    start_of_today = rwanda_now.replace(
-        hour=0,
-        minute=0,
-        second=0,
-        microsecond=0,
+    rwanda_now = datetime.now(
+        RWANDA_TZ
     )
 
-    start_of_tomorrow = start_of_today + timedelta(days=1)
+    start_of_today = (
+        rwanda_now.replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    )
 
-    return start_of_today, start_of_tomorrow
+    start_of_tomorrow = (
+        start_of_today
+        + timedelta(days=1)
+    )
+
+    return (
+        start_of_today,
+        start_of_tomorrow,
+    )
 
 
 # =========================================================
-# SALES — DAILY
+# SALES + EXPENSES SUMMARY
 # =========================================================
 
-@reports_bp.get("/sales/daily")
+def _period_summary(
+    start,
+    end,
+):
+    """
+    Returns the financial reality for a period.
+
+    Sales are never changed by expenses.
+
+    gross_revenue:
+        total money from medicine sales
+
+    expenses:
+        total money recorded as expenses
+
+    net_revenue:
+        gross_revenue - expenses
+    """
+
+    sales = (
+        db_session.query(
+            Sale
+        )
+        .filter(
+            Sale.sale_date >= start
+        )
+        .filter(
+            Sale.sale_date < end
+        )
+        .all()
+    )
+
+    expenses = (
+        db_session.query(
+            Expense
+        )
+        .filter(
+            Expense.expense_date >= start
+        )
+        .filter(
+            Expense.expense_date < end
+        )
+        .all()
+    )
+
+    gross_revenue = sum(
+        float(
+            sale.total_amount
+        )
+        for sale in sales
+    )
+
+    total_expenses = sum(
+        float(
+            expense.amount
+        )
+        for expense in expenses
+    )
+
+    net_revenue = (
+        gross_revenue
+        - total_expenses
+    )
+
+    return {
+
+        "transactions": (
+            len(sales)
+        ),
+
+        "gross_revenue": (
+            gross_revenue
+        ),
+
+        "expenses": (
+            total_expenses
+        ),
+
+        "net_revenue": (
+            net_revenue
+        ),
+
+        # Backwards compatibility.
+        #
+        # "revenue" now represents the
+        # actual money remaining after expenses.
+        "revenue": (
+            net_revenue
+        ),
+    }
+
+
+# =========================================================
+# DAILY BREAKDOWN
+# =========================================================
+
+def _daily_breakdown(
+    start,
+    end,
+):
+    """
+    Creates one entry per day.
+
+    Used by:
+    - Today
+    - This week
+    - This month
+    - Custom range
+    """
+
+    buckets = {}
+
+    current = (
+        start.date()
+    )
+
+    end_date = (
+        end.date()
+    )
+
+    while current < end_date:
+
+        buckets[
+            current.isoformat()
+        ] = {
+
+            "date": (
+                current.isoformat()
+            ),
+
+            "label": (
+                current.strftime(
+                    "%A"
+                )
+            ),
+
+            "transactions": 0,
+
+            "gross_revenue": 0.0,
+
+            "expenses": 0.0,
+
+            "net_revenue": 0.0,
+
+        }
+
+        current = (
+            current
+            + timedelta(days=1)
+        )
+
+    sales = (
+        db_session.query(
+            Sale
+        )
+        .filter(
+            Sale.sale_date >= start
+        )
+        .filter(
+            Sale.sale_date < end
+        )
+        .all()
+    )
+
+    expenses = (
+        db_session.query(
+            Expense
+        )
+        .filter(
+            Expense.expense_date >= start
+        )
+        .filter(
+            Expense.expense_date < end
+        )
+        .all()
+    )
+
+    # -----------------------------------------------------
+    # Add sales
+    # -----------------------------------------------------
+
+    for sale in sales:
+
+        sale_time = (
+            _to_rwanda_time(
+                sale.sale_date
+            )
+        )
+
+        key = (
+            sale_time.date()
+            .isoformat()
+        )
+
+        if key in buckets:
+
+            buckets[key][
+                "transactions"
+            ] += 1
+
+            buckets[key][
+                "gross_revenue"
+            ] += float(
+                sale.total_amount
+            )
+
+    # -----------------------------------------------------
+    # Add expenses
+    # -----------------------------------------------------
+
+    for expense in expenses:
+
+        expense_time = (
+            _to_rwanda_time(
+                expense.expense_date
+            )
+        )
+
+        key = (
+            expense_time.date()
+            .isoformat()
+        )
+
+        if key in buckets:
+
+            buckets[key][
+                "expenses"
+            ] += float(
+                expense.amount
+            )
+
+    # -----------------------------------------------------
+    # Calculate net revenue
+    # -----------------------------------------------------
+
+    results = []
+
+    for bucket in (
+        buckets.values()
+    ):
+
+        bucket[
+            "net_revenue"
+        ] = (
+            bucket[
+                "gross_revenue"
+            ]
+            - bucket[
+                "expenses"
+            ]
+        )
+
+        results.append(
+            bucket
+        )
+
+    return results
+
+
+# =========================================================
+# YEARLY MONTHLY BREAKDOWN
+# =========================================================
+
+def _monthly_breakdown(
+    start,
+    end,
+):
+    """
+    Creates one entry per month.
+
+    Used by the yearly report.
+    """
+
+    buckets = {}
+
+    current = (
+        start.replace(
+            day=1,
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
+        )
+    )
+
+    while current < end:
+
+        key = (
+            current.strftime(
+                "%Y-%m"
+            )
+        )
+
+        buckets[key] = {
+
+            "month": (
+                key
+            ),
+
+            "label": (
+                current.strftime(
+                    "%B"
+                )
+            ),
+
+            "transactions": 0,
+
+            "gross_revenue": 0.0,
+
+            "expenses": 0.0,
+
+            "net_revenue": 0.0,
+
+        }
+
+        if current.month == 12:
+
+            current = current.replace(
+                year=current.year + 1,
+                month=1,
+            )
+
+        else:
+
+            current = current.replace(
+                month=current.month + 1
+            )
+
+    sales = (
+        db_session.query(
+            Sale
+        )
+        .filter(
+            Sale.sale_date >= start
+        )
+        .filter(
+            Sale.sale_date < end
+        )
+        .all()
+    )
+
+    expenses = (
+        db_session.query(
+            Expense
+        )
+        .filter(
+            Expense.expense_date >= start
+        )
+        .filter(
+            Expense.expense_date < end
+        )
+        .all()
+    )
+
+    # -----------------------------------------------------
+    # Sales
+    # -----------------------------------------------------
+
+    for sale in sales:
+
+        sale_time = (
+            _to_rwanda_time(
+                sale.sale_date
+            )
+        )
+
+        key = (
+            sale_time.strftime(
+                "%Y-%m"
+            )
+        )
+
+        if key in buckets:
+
+            buckets[key][
+                "transactions"
+            ] += 1
+
+            buckets[key][
+                "gross_revenue"
+            ] += float(
+                sale.total_amount
+            )
+
+    # -----------------------------------------------------
+    # Expenses
+    # -----------------------------------------------------
+
+    for expense in expenses:
+
+        expense_time = (
+            _to_rwanda_time(
+                expense.expense_date
+            )
+        )
+
+        key = (
+            expense_time.strftime(
+                "%Y-%m"
+            )
+        )
+
+        if key in buckets:
+
+            buckets[key][
+                "expenses"
+            ] += float(
+                expense.amount
+            )
+
+    # -----------------------------------------------------
+    # Net revenue
+    # -----------------------------------------------------
+
+    results = []
+
+    for bucket in (
+        buckets.values()
+    ):
+
+        bucket[
+            "net_revenue"
+        ] = (
+            bucket[
+                "gross_revenue"
+            ]
+            - bucket[
+                "expenses"
+            ]
+        )
+
+        results.append(
+            bucket
+        )
+
+    return results
+
+
+# =========================================================
+# SALES — TODAY
+# =========================================================
+
+@reports_bp.get(
+    "/sales/daily"
+)
 @login_required
 def daily_sales():
 
-    start_of_today, start_of_tomorrow = _rwanda_today_range()
+    (
+        start_of_today,
+        start_of_tomorrow,
+    ) = (
+        _rwanda_today_range()
+    )
+
+    summary = (
+        _period_summary(
+            start_of_today,
+            start_of_tomorrow,
+        )
+    )
+
+    summary[
+        "breakdown"
+    ] = (
+        _daily_breakdown(
+            start_of_today,
+            start_of_tomorrow,
+        )
+    )
 
     return jsonify(
-        _sales_summary(
-            start=start_of_today,
-            end=start_of_tomorrow,
-        )
+        summary
     ), 200
 
 
 # =========================================================
-# SALES — WEEKLY
+# SALES — THIS WEEK
+#
+# Monday -> Sunday
 # =========================================================
 
-@reports_bp.get("/sales/weekly")
+@reports_bp.get(
+    "/sales/weekly"
+)
 @login_required
 def weekly_sales():
 
-    rwanda_now = datetime.now(RWANDA_TZ)
+    rwanda_now = datetime.now(
+        RWANDA_TZ
+    )
 
-    today = rwanda_now.date()
+    today = (
+        rwanda_now.date()
+    )
 
-    start_date = today - timedelta(
-        days=today.weekday()
+    start_date = (
+        today
+        - timedelta(
+            days=today.weekday()
+        )
     )
 
     start = datetime.combine(
@@ -181,29 +837,57 @@ def weekly_sales():
         tzinfo=RWANDA_TZ,
     )
 
-    end = start + timedelta(days=7)
+    end = (
+        start
+        + timedelta(days=7)
+    )
+
+    summary = (
+        _period_summary(
+            start,
+            end,
+        )
+    )
+
+    summary[
+        "breakdown"
+    ] = (
+        _daily_breakdown(
+            start,
+            end,
+        )
+    )
 
     return jsonify(
-        _sales_summary(
-            start=start,
-            end=end,
-        )
+        summary
     ), 200
 
 
 # =========================================================
-# SALES — MONTHLY
+# SALES — THIS MONTH
+#
+# Day-by-day breakdown
 # =========================================================
 
-@reports_bp.get("/sales/monthly")
+@reports_bp.get(
+    "/sales/monthly"
+)
 @login_required
 def monthly_sales():
 
-    rwanda_now = datetime.now(RWANDA_TZ)
+    rwanda_now = datetime.now(
+        RWANDA_TZ
+    )
 
-    today = rwanda_now.date()
+    today = (
+        rwanda_now.date()
+    )
 
-    start_date = today.replace(day=1)
+    start_date = (
+        today.replace(
+            day=1
+        )
+    )
 
     start = datetime.combine(
         start_date,
@@ -212,15 +896,28 @@ def monthly_sales():
     )
 
     if start_date.month == 12:
-        next_month = start_date.replace(
-            year=start_date.year + 1,
-            month=1,
-            day=1,
+
+        next_month = (
+            start_date.replace(
+                year=(
+                    start_date.year
+                    + 1
+                ),
+                month=1,
+                day=1,
+            )
         )
+
     else:
-        next_month = start_date.replace(
-            month=start_date.month + 1,
-            day=1,
+
+        next_month = (
+            start_date.replace(
+                month=(
+                    start_date.month
+                    + 1
+                ),
+                day=1,
+            )
         )
 
     end = datetime.combine(
@@ -229,33 +926,61 @@ def monthly_sales():
         tzinfo=RWANDA_TZ,
     )
 
-    return jsonify(
-        _sales_summary(
-            start=start,
-            end=end,
+    summary = (
+        _period_summary(
+            start,
+            end,
         )
+    )
+
+    summary[
+        "breakdown"
+    ] = (
+        _daily_breakdown(
+            start,
+            end,
+        )
+    )
+
+    return jsonify(
+        summary
     ), 200
 
 
 # =========================================================
-# SALES — YEARLY
+# SALES — THIS YEAR
+#
+# Month-by-month breakdown
 # =========================================================
 
-@reports_bp.get("/sales/yearly")
+@reports_bp.get(
+    "/sales/yearly"
+)
 @login_required
 def yearly_sales():
 
-    rwanda_now = datetime.now(RWANDA_TZ)
-
-    today = rwanda_now.date()
-
-    start_date = today.replace(
-        month=1,
-        day=1,
+    rwanda_now = datetime.now(
+        RWANDA_TZ
     )
 
-    end_date = start_date.replace(
-        year=start_date.year + 1,
+    today = (
+        rwanda_now.date()
+    )
+
+    start_date = (
+        today.replace(
+            month=1,
+            day=1,
+        )
+    )
+
+    end_date = (
+        start_date.replace(
+            year=(
+                start_date.year
+                + 1
+            )
+        )
     )
 
     start = datetime.combine(
@@ -270,44 +995,85 @@ def yearly_sales():
         tzinfo=RWANDA_TZ,
     )
 
-    return jsonify(
-        _sales_summary(
-            start=start,
-            end=end,
+    summary = (
+        _period_summary(
+            start,
+            end,
         )
+    )
+
+    summary[
+        "breakdown"
+    ] = (
+        _monthly_breakdown(
+            start,
+            end,
+        )
+    )
+
+    return jsonify(
+        summary
     ), 200
 
 
 # =========================================================
 # SALES — CUSTOM RANGE
+#
+# Day-by-day breakdown
 # =========================================================
 
-@reports_bp.get("/sales/range")
+@reports_bp.get(
+    "/sales/range"
+)
 @login_required
 def range_sales():
 
-    start_str = request.args.get("start")
-    end_str = request.args.get("end")
+    start_str = request.args.get(
+        "start"
+    )
 
-    if not start_str or not end_str:
+    end_str = request.args.get(
+        "end"
+    )
+
+    if (
+        not start_str
+        or not end_str
+    ):
+
         return error_response(
-            "start and end (YYYY-MM-DD) are required."
+            "start and end "
+            "(YYYY-MM-DD) "
+            "are required."
         )
 
     try:
-        start_date = datetime.strptime(
-            start_str,
-            "%Y-%m-%d"
-        ).date()
 
-        end_date = datetime.strptime(
-            end_str,
-            "%Y-%m-%d"
-        ).date()
+        start_date = (
+            datetime.strptime(
+                start_str,
+                "%Y-%m-%d",
+            ).date()
+        )
+
+        end_date = (
+            datetime.strptime(
+                end_str,
+                "%Y-%m-%d",
+            ).date()
+        )
 
     except ValueError:
+
         return error_response(
-            "start/end must be in YYYY-MM-DD format."
+            "start/end must be in "
+            "YYYY-MM-DD format."
+        )
+
+    if end_date < start_date:
+
+        return error_response(
+            "end date cannot be before start date."
         )
 
     start = datetime.combine(
@@ -317,16 +1083,32 @@ def range_sales():
     )
 
     end = datetime.combine(
-        end_date + timedelta(days=1),
+        (
+            end_date
+            + timedelta(days=1)
+        ),
         datetime.min.time(),
         tzinfo=RWANDA_TZ,
     )
 
-    return jsonify(
-        _sales_summary(
-            start=start,
-            end=end,
+    summary = (
+        _period_summary(
+            start,
+            end,
         )
+    )
+
+    summary[
+        "breakdown"
+    ] = (
+        _daily_breakdown(
+            start,
+            end,
+        )
+    )
+
+    return jsonify(
+        summary
     ), 200
 
 
@@ -334,39 +1116,68 @@ def range_sales():
 # BEST SELLING
 # =========================================================
 
-@reports_bp.get("/best-selling")
+@reports_bp.get(
+    "/best-selling"
+)
 @login_required
 def best_selling():
 
     rows = (
         db_session.query(
+
             Medicine.generic_name,
+
             sa_func.sum(
                 SaleItem.quantity
-            ).label("sold")
+            ).label(
+                "sold"
+            ),
+
         )
+
         .join(
             SaleItem,
-            SaleItem.medicine_id == Medicine.id
+            SaleItem.medicine_id
+            == Medicine.id,
         )
-        .group_by(Medicine.generic_name)
+
+        .group_by(
+            Medicine.generic_name
+        )
+
         .order_by(
             sa_func.sum(
                 SaleItem.quantity
             ).desc()
         )
+
         .limit(10)
+
         .all()
     )
 
     return jsonify({
+
         "medicines": [
+
             {
-                "generic_name": r[0],
-                "quantity_sold": int(r[1]),
+
+                "generic_name": (
+                    row[0]
+                ),
+
+                "quantity_sold": (
+                    int(
+                        row[1]
+                    )
+                ),
+
             }
-            for r in rows
+
+            for row in rows
+
         ]
+
     }), 200
 
 
@@ -374,39 +1185,68 @@ def best_selling():
 # LOWEST SELLING
 # =========================================================
 
-@reports_bp.get("/lowest-selling")
+@reports_bp.get(
+    "/lowest-selling"
+)
 @login_required
 def lowest_selling():
 
     rows = (
         db_session.query(
+
             Medicine.generic_name,
+
             sa_func.sum(
                 SaleItem.quantity
-            ).label("sold")
+            ).label(
+                "sold"
+            ),
+
         )
+
         .join(
             SaleItem,
-            SaleItem.medicine_id == Medicine.id
+            SaleItem.medicine_id
+            == Medicine.id,
         )
-        .group_by(Medicine.generic_name)
+
+        .group_by(
+            Medicine.generic_name
+        )
+
         .order_by(
             sa_func.sum(
                 SaleItem.quantity
             ).asc()
         )
+
         .limit(10)
+
         .all()
     )
 
     return jsonify({
+
         "medicines": [
+
             {
-                "generic_name": r[0],
-                "quantity_sold": int(r[1]),
+
+                "generic_name": (
+                    row[0]
+                ),
+
+                "quantity_sold": (
+                    int(
+                        row[1]
+                    )
+                ),
+
             }
-            for r in rows
+
+            for row in rows
+
         ]
+
     }), 200
 
 
@@ -414,7 +1254,9 @@ def lowest_selling():
 # EXPIRED MEDICINES
 # =========================================================
 
-@reports_bp.get("/expired-medicines")
+@reports_bp.get(
+    "/expired-medicines"
+)
 @login_required
 def expired_medicines_report():
 
@@ -423,23 +1265,45 @@ def expired_medicines_report():
     ).date()
 
     meds = (
-        db_session.query(Medicine)
-        .filter(
-            Medicine.expiry_date < today
+        db_session.query(
+            Medicine
         )
+
+        .filter(
+            Medicine.expiry_date
+            < today
+        )
+
         .order_by(
             Medicine.expiry_date
         )
+
         .all()
     )
 
     return jsonify({
+
         "medicines": [
+
             {
-                "generic_name": m.generic_name,
-                "expiry_date": m.expiry_date.isoformat(),
-                "quantity": m.quantity,
+
+                "generic_name": (
+                    medicine.generic_name
+                ),
+
+                "expiry_date": (
+                    medicine.expiry_date
+                    .isoformat()
+                ),
+
+                "quantity": (
+                    medicine.quantity
+                ),
+
             }
-            for m in meds
+
+            for medicine in meds
+
         ]
+
     }), 200

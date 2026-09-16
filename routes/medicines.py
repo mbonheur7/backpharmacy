@@ -146,7 +146,7 @@ def get_medicine(medicine_id):
 
 
 @medicines_bp.post("")
-@login_required
+@require_role("Super Admin", "Pharmacist")
 def create_medicine():
     """
     Both Admin and Pharmacist can add medicines.
@@ -439,7 +439,7 @@ def create_medicine():
 
 
 @medicines_bp.patch("/<int:medicine_id>")
-@login_required
+@require_role("Super Admin", "Pharmacist")
 def update_medicine(medicine_id):
 
     medicine = (
@@ -538,7 +538,7 @@ def update_medicine(medicine_id):
 
 
 @medicines_bp.patch("/<int:medicine_id>/pricing")
-@require_role("Admin")
+@require_role("Super Admin")
 def update_pricing(medicine_id):
 
     medicine = (
@@ -633,7 +633,7 @@ def update_pricing(medicine_id):
 
 
 @medicines_bp.patch("/<int:medicine_id>/status")
-@require_role("Admin")
+@require_role("Super Admin")
 def update_status(medicine_id):
 
     medicine = (
@@ -686,7 +686,7 @@ def update_status(medicine_id):
 
 
 @medicines_bp.post("/<int:medicine_id>/deactivate")
-@require_role("Admin")
+@require_role("Super Admin")
 def deactivate_medicine(medicine_id):
     """
     The spec uses deactivation instead of hard deletion.
@@ -737,7 +737,7 @@ def deactivate_medicine(medicine_id):
 
 
 @medicines_bp.post("/<int:medicine_id>/reactivate")
-@require_role("Admin")
+@require_role("Super Admin")
 def reactivate_medicine(medicine_id):
 
     medicine = (
@@ -789,7 +789,7 @@ def reactivate_medicine(medicine_id):
 @medicines_bp.post(
     "/<int:medicine_id>/stock-movements"
 )
-@login_required
+@require_role("Super Admin", "Pharmacist")
 def create_stock_movement(medicine_id):
     """
     Both roles can create stock movements.

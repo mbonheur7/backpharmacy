@@ -12,7 +12,7 @@ activity_logs_bp = Blueprint("activity_logs", __name__)
 
 
 @activity_logs_bp.get("")
-@require_role("Admin")
+@require_role("Super Admin", "Admin Viewer")
 def list_activity_logs():
     query = db_session.query(ActivityLog)
 
